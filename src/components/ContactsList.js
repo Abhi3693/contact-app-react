@@ -1,113 +1,123 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import yup, { setLocale } from 'yup';
+import * as yup from 'yup';
 
-import validate from '../utils/validate';
 import useFetch from '../customHooks/useFetch';
 import { CONTACTS_URL } from '../utils/constants';
 
-const initialInputInfo = {
+let schema = yup.object().shape({
+  firstName: yup
+    .string()
+    .required('First name is required')
+    .min(3, 'Min 3 characters are required'),
+  lastName: yup
+    .string()
+    .required('Last name is required')
+    .min(3, 'Min 3 characters are required'),
+  phone: yup
+    .string()
+    .required('Phone is required')
+    .matches(/^\d+$/, 'Phone should only contain numbers')
+    .min(10, 'Phone should have 10 digits')
+    .max(10, 'Phone should have 10 digits'),
+});
+
+const DEFAULT_FORM_VALUES = {
   firstName: '',
   lastName: '',
   phone: '',
-  err: '',
 };
 
-const initialInputError = {
-  firstName: '',
-  lastName: '',
-  phone: '',
-};
-
-const initialAPIError = {
-  fetchContacts: '',
+const DEFAULT_API_ERRORS = {
   addContact: '',
+  fetchContacts: '',
 };
 
 function ContactsList() {
   const [contacts, setContacts] = useState([]);
-  const [inputInfo, setInputInfo] = useState(initialInputInfo);
-  const [inputError, setInputError] = useState(initialInputError);
-  const [apiError, setAPIError] = useState(initialAPIError);
-  let timeID = null;
+  const [formValues, setFormValues] = useState(DEFAULT_FORM_VALUES);
+  const [apiError, setAPIError] = useState(DEFAULT_API_ERRORS);
+  const [isValidating, setValidating] = useState(false);
+  const [formErrors, setFormErrors] = useState({});
 
   const { makeApiCall, isLoading } = useFetch();
 
   useEffect(() => {
     fetchContacts();
-    return () => {
-      if (timeID) {
-        clearTimeout(timeID);
-      }
-    };
   }, []);
 
-  const removeError = () => {
-    setAPIError(initialAPIError);
-    setInputError(initialInputError);
+  useEffect(() => {
+    if (isValidating) performValidation();
+  }, [formValues]);
+
+  // Validation
+  const resetValidationErrors = () => {
+    setFormErrors({});
+  };
+
+  const performValidation = (successCallback = null) => {
+    schema
+      .validate(formValues, { abortEarly: false })
+      .then((values) => {
+        resetValidationErrors();
+        if (successCallback) {
+          successCallback(values);
+        }
+      })
+      .catch((err) => {
+        const errors = {};
+
+        err.inner.forEach((e) => {
+          if (!errors[e.path]) {
+            errors[e.path] = e.errors[0];
+          }
+        });
+
+        setFormErrors(errors);
+      });
+  };
+
+  const validateForm = (event) => {
+    event.preventDefault();
+    setValidating(true);
+    setAPIError(DEFAULT_API_ERRORS);
+    performValidation(handleSubmit);
   };
 
   const fetchContacts = async () => {
     let response = await makeApiCall(CONTACTS_URL);
-    setInputError(initialInputError);
     if (response.error) {
       setAPIError({ ...apiError, fetchContacts: response.error });
-      setInputError(initialInputError);
     } else {
       setContacts(response.contacts);
-      setAPIError(initialAPIError);
+      resetValidationErrors();
     }
   };
 
   const handleAddContact = async (url, method, body) => {
     let response = await makeApiCall(url, method, body);
     if (response.error) {
-      console.log(initialInputError);
-      setInputError({ firstName: '', lastName: '', phone: '' });
       setAPIError({ ...apiError, addContact: response.error });
     } else {
       fetchContacts();
     }
   };
 
-  const handleSubmit = (event) => {
-    event.preventDefault();
-    let { firstName, lastName, phone } = inputInfo;
-
-    if (firstName && lastName && phone) {
-      handleAddContact(
-        CONTACTS_URL,
-        'POST',
-        JSON.stringify({ contact: { firstName, lastName, phone } })
-      );
-      setInputInfo(initialInputInfo);
-      setInputError(initialInputError);
-    } else {
-      setInputError({
-        ...inputError,
-        firstName: 'First name is requird',
-        lastName: 'Last name is requird',
-        phone: 'Phone is required',
-      });
-      setInputInfo(initialInputInfo);
-      return;
-    }
+  const handleSubmit = ({ firstName, lastName, phone }) => {
+    handleAddContact(
+      CONTACTS_URL,
+      'POST',
+      JSON.stringify({ contact: { firstName, lastName, phone } })
+    );
+    setValidating(false);
+    setFormValues(DEFAULT_FORM_VALUES);
   };
 
   const handleChange = (event) => {
     let { name, value } = event.target;
-    validate(inputError, name, value);
-    setInputError({ ...inputError });
-    setInputInfo({ ...inputInfo, [name]: value });
+    setAPIError(DEFAULT_API_ERRORS);
+    setFormValues({ ...formValues, [name]: value });
   };
-
-  if (
-    apiError.addContact ||
-    apiError.fetchContacts ||
-    (inputError.firstName && inputError.lastName && inputError.phone)
-  ) {
-    timeID = setTimeout(removeError, 2000);
-  }
 
   if (isLoading) {
     return <h1 className='text-center text-success my-5'>Loading...</h1>;
@@ -121,7 +131,7 @@ function ContactsList() {
             method='POST'
             action='/api/contacts'
             className='row g-3 border border-4 p-3 pb-5 mt-4'
-            onSubmit={handleSubmit}
+            onSubmit={validateForm}
           >
             <h2 className='text-center text-secondary'>Add Contact Info</h2>
             <p className='my-2 text-danger text-center'>
@@ -137,9 +147,9 @@ function ContactsList() {
                 name='firstName'
                 id='inputEmail4'
                 onChange={handleChange}
-                value={inputInfo.firstName}
+                value={formValues.firstName}
               />
-              <p className='my-2 text-danger'>{inputError.firstName}</p>
+              <FormValidationError error={formErrors?.firstName} />
             </div>
             <div className='col-md-12'>
               <label htmlFor='inputPassword4' className='form-label'>
@@ -151,9 +161,9 @@ function ContactsList() {
                 name='lastName'
                 id='inputPassword4'
                 onChange={handleChange}
-                value={inputInfo.lastName}
+                value={formValues.lastName}
               />
-              <p className='my-2 text-danger'>{inputError.lastName}</p>
+              <FormValidationError error={formErrors?.lastName} />
             </div>
             <div className='col-md-12'>
               <label htmlFor='inputEmai' className='form-label'>
@@ -165,9 +175,9 @@ function ContactsList() {
                 name='phone'
                 id='inputEmai'
                 onChange={handleChange}
-                value={inputInfo.phone}
+                value={formValues.phone}
               />
-              <p className='my-2 text-danger'>{inputError.phone}</p>
+              <FormValidationError error={formErrors?.phone} />
             </div>
             <div className='col-md-12'>
               <button type='submit' className='btn btn-primary'>
@@ -209,5 +219,10 @@ function ContactsList() {
     </div>
   );
 }
+
+const FormValidationError = ({ error }) => {
+  if (!error) return null;
+  return <p className='my-2 text-danger'>{error}</p>;
+};
 
 export default ContactsList;
